@@ -1,7 +1,6 @@
 import { Innertube, UniversalCache } from 'youtubei.js/web';
 import { fetch as tauriFetch } from '@tauri-apps/plugin-http';
 import { BG } from 'bgutils-js';
-import { JSDOM } from 'jsdom';
 
 const UA =
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 ' +
@@ -18,22 +17,21 @@ function brandedFetch(input, init = {}) {
 }
 
 // Depuis 2026, YouTube exige un "PoToken" (preuve d'origine) sur la plupart
-// des requêtes, y compris la recherche. bgutils-js le génère en simulant
-// l'environnement JS que YouTube vérifie (BotGuard).
+// des requêtes, y compris la recherche. L'app tourne déjà dans une vraie
+// webview (window/document existent nativement) : pas besoin de simuler
+// un navigateur, on utilise celui qu'on a déjà.
 async function makePoToken(visitorData) {
-  const dom = new JSDOM();
-  Object.assign(globalThis, { window: dom.window, document: dom.window.document });
-
   const challengeRes = await BG.Challenge.create({
     fetch: brandedFetch,
-    globalObj: globalThis,
+    globalObj: window,
     requestKey: 'O43z0dpjhgX20SCx4KAo'
   });
   if (!challengeRes) throw new Error('Impossible de créer le challenge BotGuard');
 
   const interpreterUrl = challengeRes.interpreterJavascriptUrl?.privateDoNotAccessOrElseSafeScriptWrappedValue;
-  if (interpreterUrl) {
+  if (interpreterUrl && !window[challengeRes.globalName]) {
     const script = await (await brandedFetch(`https:${interpreterUrl}`)).text();
+    // eslint-disable-next-line no-new-func
     new Function(script)();
   }
 
@@ -42,7 +40,7 @@ async function makePoToken(visitorData) {
     globalName: challengeRes.globalName,
     bgConfig: {
       fetch: brandedFetch,
-      globalObj: globalThis,
+      globalObj: window,
       identifier: visitorData,
       requestKey: 'O43z0dpjhgX20SCx4KAo'
     }
@@ -64,7 +62,6 @@ async function client() {
       const visitorData = yt.session.context.client.visitorData;
       const poToken = await makePoToken(visitorData);
       yt.session.po_token = poToken;
-      yt.session.context.client.visitorData = visitorData;
     } catch (e) {
       // Si la génération échoue, on continue quand même : certaines requêtes
       // passent encore sans PoToken selon les moments.
